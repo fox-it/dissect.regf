@@ -4,6 +4,16 @@ A Dissect module implementing a parser for Windows registry file format, used to
 on Windows operating systems. For more information, please see [the
 documentation](https://dissect.readthedocs.io/en/latest/projects/dissect.regf).
 
+## Installation
+
+`dissect.regf` is available on [PyPI](https://pypi.org/project/dissect.regf/).
+
+```bash
+pip install dissect.regf
+```
+
+This module is also automatically installed if you install the `dissect` package.
+
 ## Build and test instructions
 
 This project uses `tox` to build source and wheel distributions. Run the following command from the root folder to build
