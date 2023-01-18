@@ -160,6 +160,12 @@ class NamedKey:
 
         self.nk = c_regf.NAMED_KEY(data)
 
+        self.class_name = None
+        if self.nk.class_name_offset != 0xFFFFFFFF:
+            self.class_name = self.hive.read_cell_data(self.nk.class_name_offset)[: self.nk.class_name_size].decode(
+                "utf-16-le"
+            )
+
         name_blob = data[len(c_regf.NAMED_KEY) :][: self.nk.key_name_size]
         self.name = decode_name(name_blob, self.nk.key_name_size, self.nk.flags.CompName)
 

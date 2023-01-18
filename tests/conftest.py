@@ -1,16 +1,18 @@
+import gzip
 import os
-import io
-import zlib
+
 import pytest
 
 
-def open_data(name):
-    with open(os.path.join(os.path.dirname(__file__), name), "rb") as fh:
-        buf = fh.read()
+def absolute_path(filename):
+    return os.path.join(os.path.dirname(__file__), filename)
 
-    return io.BytesIO(zlib.decompress(buf))
+
+def open_file_gz(name):
+    with gzip.GzipFile(absolute_path(name), "rb") as f:
+        yield f
 
 
 @pytest.fixture
 def system_hive():
-    return open_data("data/SYSTEM.bin")
+    yield from open_file_gz("data/SYSTEM.gz")
