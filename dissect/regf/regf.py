@@ -1,15 +1,13 @@
-import os
-import sys
-import struct
 import logging
+import os
+import struct
+import sys
 from functools import lru_cache
-
 from io import BytesIO
 
 from dissect.util.ts import wintimestamp
 
 from dissect.regf.c_regf import (
-    c_regf,
     REG_BINARY,
     REG_DWORD,
     REG_DWORD_BIG_ENDIAN,
@@ -20,9 +18,13 @@ from dissect.regf.c_regf import (
     REG_QWORD,
     REG_RESOURCE_REQUIREMENTS_LIST,
     REG_SZ,
+    c_regf,
 )
-from dissect.regf.exceptions import Error, RegistryKeyNotFoundError, RegistryValueNotFoundError
-
+from dissect.regf.exceptions import (
+    Error,
+    RegistryKeyNotFoundError,
+    RegistryValueNotFoundError,
+)
 
 log = logging.getLogger(__name__)
 log.setLevel(os.getenv("DISSECT_LOG_REGF", "CRITICAL"))

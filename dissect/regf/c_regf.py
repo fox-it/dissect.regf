@@ -1,6 +1,5 @@
 from dissect import cstruct
 
-
 c_regf_def = """
 struct REGF_HEADER {
     uint32 signature;
