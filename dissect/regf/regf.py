@@ -169,6 +169,7 @@ class NamedKey:
             )
 
         name_blob = data[len(c_regf.NAMED_KEY) :][: self.nk.key_name_size]
+
         self.name = decode_name(name_blob, self.nk.key_name_size, self.nk.flags.CompName)
 
     @property
@@ -241,13 +242,31 @@ class NamedKey:
 
     @property
     def path(self):
-        parts = [self.name]
-        data = self.hive.cell(self.nk.parent_key_offset)
-        parts.append(data.name)
+        parts = []
 
-        while data.nk.flags.HiveEntry != 1:
-            data = self.hive.cell(data.nk.parent_key_offset)
-            parts.append(data.name)
+        current = self
+        # As long as we are not the ROOT key, we add our name to the stack.
+        #
+        # The path is relative to the hive of this key. Adding a name for the
+        # ROOT key will lead to issues when this hive is mapped on a subkey of
+        # another hive. The full path to this key is constructed using both the
+        # path of the subkey in the other hieve and this key's path.
+        #
+        # If ROOT would be part of that path, that part (and thus the whole
+        # path) would not be accesible, nor is the presence of the ROOT part in
+        # the path expected by the user (it is never visible in e.g. regedit).
+        if current.nk.flags.HiveEntry != 1:
+            parent = self.hive.cell(current.nk.parent_key_offset)
+        else:
+            parent = None
+
+        while parent is not None:
+            parts.append(current.name)
+            current = parent
+            if current.nk.flags.HiveEntry != 1:
+                parent = self.hive.cell(current.nk.parent_key_offset)
+            else:
+                parent = None
 
         return "\\".join(list(reversed(parts)))
 
