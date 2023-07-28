@@ -4,6 +4,7 @@ import struct
 import sys
 from functools import lru_cache
 from io import BytesIO
+from typing import Union
 
 from dissect.util.ts import wintimestamp
 
@@ -486,7 +487,7 @@ def try_decode_sz(data):
         return data.decode("utf-16-le", "ignore").strip("\x00")
 
 
-def parse_value(data_type, data):
+def parse_value(data_type: int, data: bytes) -> Union[int, str, list[str], bytes]:
     if data_type in (REG_DWORD, REG_DWORD_BIG_ENDIAN):
         if len(data) == 0:
             return 0
@@ -495,6 +496,9 @@ def parse_value(data_type, data):
             return c_regf.uint32(data[:4])
         elif data_type == REG_DWORD_BIG_ENDIAN:
             return struct.unpack(">I", data[:4])[0]
+
+    if data_type == REG_QWORD:
+        return c_regf.uint64(data) if len(data) else 0
 
     if data_type in (REG_SZ, REG_EXPAND_SZ):
         return try_decode_sz(data)
@@ -515,9 +519,6 @@ def parse_value(data_type, data):
             multi_string.append(string)
 
         return multi_string
-
-    if data_type == REG_QWORD:
-        return c_regf.uint64(data) if len(data) else 0
 
     if data_type == REG_FULL_RESOURCE_DESCRIPTOR:
         log.warning("Unimplemented REG_FULL_RESOURCE_DESCRIPTOR")
