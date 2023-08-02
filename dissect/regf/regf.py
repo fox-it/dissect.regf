@@ -4,6 +4,7 @@ import struct
 import sys
 from functools import lru_cache
 from io import BytesIO
+from typing import Union
 
 from dissect.util.ts import wintimestamp
 
@@ -322,56 +323,10 @@ class KeyValue:
             self._data = data
         return self._data
 
-    def parse_value(self):
-        data = self.data
-
-        if self.kv.data_type in (REG_DWORD, REG_DWORD_BIG_ENDIAN):
-            if len(data) == 0:
-                return 0
-
-            if self.kv.data_type == REG_DWORD:
-                return c_regf.uint32(data[:4])
-            elif self.kv.data_type == REG_DWORD_BIG_ENDIAN:
-                return struct.unpack(">I", data[:4])[0]
-
-        if self.kv.data_type in (REG_SZ, REG_EXPAND_SZ):
-            return try_decode_sz(data)
-
-        if self.kv.data_type in (REG_BINARY, REG_NONE):
-            return data
-
-        if self.kv.data_type == REG_MULTI_SZ:
-            data_len = len(data)
-            data = BytesIO(data)
-
-            multi_string = []
-            while data.tell() < data_len:
-                string = read_null_terminated_wstring(data)
-                if string == "":
-                    break
-
-                multi_string.append(string)
-
-            return multi_string
-
-        if self.kv.data_type == REG_QWORD:
-            return c_regf.uint64(data) if len(data) else 0
-
-        if self.kv.data_type == REG_FULL_RESOURCE_DESCRIPTOR:
-            log.warning("Unimplemented REG_FULL_RESOURCE_DESCRIPTOR")
-            return data
-
-        if self.kv.data_type == REG_RESOURCE_REQUIREMENTS_LIST:
-            log.warning("Unimplemented REG_RESOURCE_REQUIREMENTS_LIST")
-            return data
-
-        log.warning("Data type 0x%x not supported", self.kv.data_type)
-        return data
-
     @property
     def value(self):
         if self._value is None:
-            self._value = self.parse_value()
+            self._value = parse_value(self.kv.data_type, self.data)
         return self._value
 
     def __repr__(self):
@@ -530,6 +485,51 @@ def try_decode_sz(data):
         # any decoding errors, which incase of utf-16 will be invalid utf-16
         # surrogates, will be ignored.
         return data.decode("utf-16-le", "ignore").strip("\x00")
+
+
+def parse_value(data_type: int, data: bytes) -> Union[int, str, list[str], bytes]:
+    if data_type in (REG_DWORD, REG_DWORD_BIG_ENDIAN):
+        if len(data) == 0:
+            return 0
+
+        if data_type == REG_DWORD:
+            return c_regf.uint32(data[:4])
+        elif data_type == REG_DWORD_BIG_ENDIAN:
+            return struct.unpack(">I", data[:4])[0]
+
+    if data_type == REG_QWORD:
+        return c_regf.uint64(data) if len(data) else 0
+
+    if data_type in (REG_SZ, REG_EXPAND_SZ):
+        return try_decode_sz(data)
+
+    if data_type in (REG_BINARY, REG_NONE):
+        return data
+
+    if data_type == REG_MULTI_SZ:
+        data_len = len(data)
+        data = BytesIO(data)
+
+        multi_string = []
+        while data.tell() < data_len:
+            string = read_null_terminated_wstring(data)
+            if string == "":
+                break
+
+            multi_string.append(string)
+
+        return multi_string
+
+    if data_type == REG_FULL_RESOURCE_DESCRIPTOR:
+        log.warning("Unimplemented REG_FULL_RESOURCE_DESCRIPTOR")
+        return data
+
+    if data_type == REG_RESOURCE_REQUIREMENTS_LIST:
+        log.warning("Unimplemented REG_RESOURCE_REQUIREMENTS_LIST")
+        return data
+
+    log.warning("Data type 0x%x not supported", data_type)
+    return data
 
 
 def read_null_terminated_wstring(stream, encoding="utf-16-le"):
