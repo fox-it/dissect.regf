@@ -478,7 +478,17 @@ def try_decode_sz(data):
 
         # This will return the string utf-16-le decoded up until the first
         # double NULL byte.
-        return data.split(b"\x00\x00")[0].decode("utf-16-le")
+        # A naive split on two NULL bytes will not work as the possibility
+        # exists that the first NULL byte is the high byte of the first
+        # character and the second NULL byte the low byte of the second
+        # character. So the first NULL byte should start at an even index in
+        # the data.
+        idx = -1
+        while (idx := data.find(b"\x00\x00", idx + 1)) & 1:
+            if idx == -1:
+                idx = len(data)
+                break
+        return data[:idx].decode("utf-16-le")
 
     except UnicodeDecodeError:
         # Last ditch effort, decode the whole bytestring as if it were utf-16,

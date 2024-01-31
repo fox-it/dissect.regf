@@ -1,3 +1,5 @@
+import pytest
+
 from dissect.regf import regf
 
 
@@ -22,3 +24,56 @@ def test_regf(system_hive):
     assert lsa.subkey("Data").class_name == "a282942c"
 
     assert hive.open("ControlSet001\\Services\\Tcpip\\Parameters\\DNSRegisteredAdapters").class_name == "DynDRootClass"
+
+
+@pytest.mark.parametrize(
+    "data, expected",
+    [
+        (
+            b"",
+            "",
+        ),
+        (
+            b"The Quick Brown Fox\x00Jumped Over The Lazy Dog",
+            "The Quick Brown Fox",
+        ),
+        (
+            b"The Quick Brown Fox\x00Jumped Over The Lazy Dog\x00",
+            "The Quick Brown Fox",
+        ),
+        (
+            b"The Quick Brown Fox",
+            "The Quick Brown Fox",
+        ),
+        (
+            "The Quick Brown Fox\x00Jumped Over The Lazy Dog".encode("utf-16-le"),
+            "The Quick Brown Fox",
+        ),
+        (
+            "The Quick Brown Fox\x00Jumped Over The Lazy Dog\x00".encode("utf-16-le"),
+            "The Quick Brown Fox",
+        ),
+        (
+            "The Quick Brown Fox\x00Jumped Over The Lazy Dog".encode("utf-16-le") + b"\x00",
+            "The Quick Brown Fox",
+        ),
+        (
+            "The Quick Brown Fox".encode("utf-16-le"),
+            "The Quick Brown Fox",
+        ),
+        (
+            b"\xe4bcd\x00",  # interpreted as latin1
+            "äbcd",
+        ),
+        (
+            b"\xe4bcd",  # interpreted as utf-16-le
+            "拤摣",
+        ),
+        (
+            b"\x41\x00\x00\x01\x42\x00",
+            "AĀB",
+        ),
+    ],
+)
+def test_try_decode_sz(data, expected):
+    assert regf.try_decode_sz(data) == expected
