@@ -60,6 +60,9 @@ class RegistryHive:
             log.debug(f"Hive {self.filename!r} is not undergoing any transactions.")
 
         self.hbin_offset = 4096
+
+        self.cell = lru_cache(4096)(self.cell)
+
         self._root = self.cell(self.header.root_key_offset)
 
     def root(self):
@@ -105,7 +108,6 @@ class RegistryHive:
 
         raise NotImplementedError(repr(sig))
 
-    @lru_cache(4096)
     def cell(self, offset):
         return self.read_cell(offset)
 
