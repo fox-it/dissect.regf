@@ -38,6 +38,8 @@ class RegistryHive:
     def __init__(self, fh):
         self.fh = fh
 
+        self.cell = lru_cache(4096)(self.cell)
+
         data = fh.read(4096)
         self.header = c_regf.REGF_HEADER(data)
         self.filename = self.header.filename.decode("utf-16-le").rstrip("\x00")
@@ -105,7 +107,6 @@ class RegistryHive:
 
         raise NotImplementedError(repr(sig))
 
-    @lru_cache(4096)
     def cell(self, offset):
         return self.read_cell(offset)
 
