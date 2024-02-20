@@ -38,8 +38,6 @@ class RegistryHive:
     def __init__(self, fh):
         self.fh = fh
 
-        self.cell = lru_cache(4096)(self.cell)
-
         data = fh.read(4096)
         self.header = c_regf.REGF_HEADER(data)
         self.filename = self.header.filename.decode("utf-16-le").rstrip("\x00")
@@ -62,6 +60,9 @@ class RegistryHive:
             log.debug(f"Hive {self.filename!r} is not undergoing any transactions.")
 
         self.hbin_offset = 4096
+
+        self.cell = lru_cache(4096)(self.cell)
+
         self._root = self.cell(self.header.root_key_offset)
 
     def root(self):
