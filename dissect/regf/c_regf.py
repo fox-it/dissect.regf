@@ -1,6 +1,6 @@
-from dissect import cstruct
+from dissect.cstruct import cstruct
 
-c_regf_def = """
+regf_def = """
 struct REGF_HEADER {
     uint32 signature;
     uint32 primary_sequence;
@@ -137,8 +137,7 @@ struct BIG_DATA {
 };
 """
 
-c_regf = cstruct.cstruct()
-c_regf.load(c_regf_def)
+c_regf = cstruct().load(regf_def)
 
 
 REG_NONE = 0x0
