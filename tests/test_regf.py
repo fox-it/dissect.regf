@@ -1,9 +1,13 @@
+from __future__ import annotations
+
+from typing import BinaryIO
+
 import pytest
 
 from dissect.regf import regf
 
 
-def test_regf(system_hive):
+def test_regf(system_hive: BinaryIO) -> None:
     hive = regf.RegistryHive(system_hive)
 
     root = hive.root()
@@ -27,7 +31,7 @@ def test_regf(system_hive):
 
 
 @pytest.mark.parametrize(
-    "data, expected",
+    ("data", "expected"),
     [
         (
             b"",
@@ -75,5 +79,5 @@ def test_regf(system_hive):
         ),
     ],
 )
-def test_try_decode_sz(data, expected):
+def test_try_decode_sz(data: bytes, expected: str) -> None:
     assert regf.try_decode_sz(data) == expected
