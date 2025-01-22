@@ -1,18 +1,19 @@
 import sys
+from pathlib import Path
 
 from dissect.regf import regf
 
 
-def main():
-    fp = open(sys.argv[1], "rb")
-    hive = regf.RegistryHive(fp)
+def main() -> None:
+    with Path(sys.argv[1]).open("rb") as fh:
+        hive = regf.RegistryHive(fh)
 
-    for offset, allocated, reg_entry in hive.walk():
-        if not isinstance(reg_entry, regf.KeyValue):
-            continue
+        for offset, allocated, cell in hive.walk():
+            if not isinstance(cell, regf.KeyValue):
+                continue
 
-        if (reg_entry.kv.data_size & ~0x80000000) > 0x4000:
-            print(hex(offset), "+" if allocated else "-", reg_entry.name, reg_entry.kv)
+            if cell.size > 0x4000:
+                print(hex(offset), "+" if allocated else "-", cell.name, cell.cell)
 
 
 if __name__ == "__main__":
