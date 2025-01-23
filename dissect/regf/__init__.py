@@ -6,8 +6,8 @@ from dissect.regf.exceptions import (
 from dissect.regf.regf import RegistryHive
 
 __all__ = [
-    "RegistryHive",
     "Error",
+    "RegistryHive",
     "RegistryKeyNotFoundError",
     "RegistryValueNotFoundError",
 ]
