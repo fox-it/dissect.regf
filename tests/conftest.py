@@ -1,18 +1,24 @@
+from __future__ import annotations
+
 import gzip
-import os
+from pathlib import Path
+from typing import TYPE_CHECKING, BinaryIO
 
 import pytest
 
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
-def absolute_path(filename):
-    return os.path.join(os.path.dirname(__file__), filename)
+
+def absolute_path(filename: str) -> Path:
+    return Path(__file__).parent / filename
 
 
-def open_file_gz(name):
-    with gzip.GzipFile(absolute_path(name), "rb") as f:
-        yield f
+def open_file_gz(name: str) -> Iterator[BinaryIO]:
+    with gzip.GzipFile(absolute_path(name), "rb") as fh:
+        yield fh
 
 
 @pytest.fixture
-def system_hive():
+def system_hive() -> Iterator[BinaryIO]:
     yield from open_file_gz("data/SYSTEM.gz")
