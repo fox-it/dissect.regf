@@ -1,3 +1,5 @@
+project = "dissect.regf"
+
 extensions = [
     "autoapi.extension",
     "sphinx.ext.autodoc",

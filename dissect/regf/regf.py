@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, BinaryIO
 from dissect.util.ts import wintimestamp
 
 from dissect.regf.c_regf import (
+    KEY,
     REG_BINARY,
     REG_DWORD,
     REG_DWORD_BIG_ENDIAN,
@@ -20,6 +21,7 @@ from dissect.regf.c_regf import (
     REG_QWORD,
     REG_RESOURCE_REQUIREMENTS_LIST,
     REG_SZ,
+    VALUE,
     c_regf,
 )
 from dissect.regf.exceptions import (
@@ -36,16 +38,25 @@ log = logging.getLogger(__name__)
 log.setLevel(os.getenv("DISSECT_LOG_REGF", "CRITICAL"))
 
 
+# TODO: Add `: TypeAlias` when we drop Python 3.9
+CellType = "IndexLeaf | FastLeaf | HashLeaf | IndexRoot | KeyNode | KeyValue"
+
+STABLE = 0
+VOLATILE = 1
+
+
 class RegistryHive:
     def __init__(self, fh: BinaryIO):
         self.fh = fh
 
-        data = fh.read(4096)
-        self.header = c_regf.REGF_HEADER(data)
-        self.filename = self.header.filename.decode("utf-16-le").rstrip("\x00")
+        self.fh.seek(0)
+        data = self.fh.read(len(c_regf._HBASE_BLOCK))
+        self.header = c_regf._HBASE_BLOCK(data)
+        self.version = self.header.Minor
+        self.filename = self.header.FileName.rstrip("\x00")
 
-        dirty = xor32_crc(data[:508]) == self.header.checksum
-        if dirty:
+        self.dirty = xor32_crc(data[:508]) == self.header.CheckSum
+        if self.dirty:
             log.warning(
                 "Checksum failed, the %r hive is dirty, recovery needed, "
                 "may not be able to read keys and values properly",
@@ -54,8 +65,8 @@ class RegistryHive:
         else:
             log.debug("Hive %r checksum OK", self.filename)
 
-        in_transaction = self.header.primary_sequence != self.header.secondary_sequence
-        if in_transaction:
+        self.in_transaction = self.header.Sequence1 != self.header.Sequence2
+        if self.in_transaction:
             log.warning(
                 "The hive %r is undergoing a transaction, may not be able to read keys and values properly",
                 self.filename,
@@ -63,63 +74,45 @@ class RegistryHive:
         else:
             log.debug("Hive %r is not undergoing any transactions", self.filename)
 
-        self.hbin_offset = 4096
-        self._root = self.cell(self.header.root_key_offset)
+        self._hbin_offset = len(c_regf._HBASE_BLOCK)
+        self._root = self.cell(self.header.RootCell)
 
         self.cell = lru_cache(4096)(self.cell)
 
-    def root(self) -> IndexLeaf | FastLeaf | HashLeaf | IndexRoot | NamedKey | KeyValue:
+    def root(self) -> KeyNode:
         return self._root
 
-    def read_cell_data(self, offset: int) -> bytes:
-        self.fh.seek(self.hbin_offset + offset)
-        size = c_regf.int32(self.fh)
-        if size < 0:  # allocated
+    def cell(self, offset: int) -> CellType:
+        return self.parse_cell_data(self.cell_data(offset))
+
+    def _cell_data(self, offset: int) -> tuple[bool, bytes]:
+        self.fh.seek(self._hbin_offset + offset)
+
+        allocated = False
+        if (size := struct.unpack("<i", self.fh.read(4))[0]) < 0:
             size = -size
+            allocated = True
 
-        return self.fh.read(size - 4)
+        return allocated, self.fh.read(size - 4)
 
-    def read_cell(self, offset: int) -> IndexLeaf | FastLeaf | HashLeaf | IndexRoot | NamedKey | KeyValue:
-        data = self.read_cell_data(offset)
-        return self.parse_cell_data(data)
+    def cell_data(self, offset: int) -> bytes:
+        _, data = self._cell_data(offset)
+        return data
 
-    def parse_cell_data(self, data: bytes) -> IndexLeaf | FastLeaf | HashLeaf | IndexRoot | NamedKey | KeyValue:
+    def parse_cell_data(self, data: bytes) -> CellType:
         sig = data[:2]
-        if sig == b"li":
-            return IndexLeaf(self, data)
 
-        if sig == b"lf":
-            return FastLeaf(self, data)
-
-        if sig == b"lh":
-            return HashLeaf(self, data)
-
-        if sig == b"ri":
-            return IndexRoot(self, data)
-
-        if sig == b"nk":
-            return NamedKey(self, data)
-
-        if sig == b"vk":
-            return KeyValue(self, data)
-
-        if sig == b"sk":
-            raise NotImplementedError(repr(sig))
-
-        if sig == b"db":
-            raise NotImplementedError(repr(sig))
+        if cls := _CELL_CLASSES.get(sig):
+            return cls(self, data)
 
         raise NotImplementedError(repr(sig))
 
-    def cell(self, offset: int) -> IndexLeaf | FastLeaf | HashLeaf | IndexRoot | NamedKey | KeyValue:
-        return self.read_cell(offset)
-
-    def open(self, path: str) -> IndexLeaf | FastLeaf | HashLeaf | IndexRoot | NamedKey | KeyValue:
+    def open(self, path: str) -> CellType:
         path = path.strip("\\")
         parts = path.split("\\") if path else []
 
         realpath = []
-        node = self.root()
+        node = self._root
         for part in parts:
             subkey = node.subkey(part)
             realpath.append(subkey.name)
@@ -128,60 +121,65 @@ class RegistryHive:
 
         return node
 
-    def walk(self) -> Iterator[tuple[int, bool, NamedKey | bytes]]:
-        next_hbin = self.hbin_offset
+    def walk(self) -> Iterator[tuple[int, bool, CellType | bytes]]:
+        next_hbin = self._hbin_offset
+        hive_size = self.header.Length + self._hbin_offset
 
-        while True:
+        while next_hbin < hive_size:
             self.fh.seek(next_hbin)
-            header = c_regf.HBIN_HEADER(self.fh)
-            if header.signature != 0x6E696268:
+            header = c_regf._HBIN(self.fh)
+            if header.Signature != 0x6E696268:
                 break
 
-            next_hbin += header.size
+            next_hbin += header.Size
 
-            while self.fh.tell() < next_hbin:
-                offset = self.fh.tell()
-                size = c_regf.int32(self.fh)
+            offset = self.fh.tell()
+            while offset < next_hbin:
+                allocated, data = self._cell_data(offset - self._hbin_offset)
+                cell = _CELL_CLASSES.get(data[:2], lambda hive, buf: buf)(self, data)
 
-                allocated = False
-                if size < 0:  # allocated
-                    size = -size
-                    allocated = True
-
-                data = self.read_cell_data(offset)
-                try:
-                    reg_entry = self.parse_cell_data(data)
-                except NotImplementedError:
-                    reg_entry = data
-
-                yield offset, allocated, reg_entry
+                yield offset, allocated, cell
+                offset += 4 + len(data)
 
 
-class NamedKey:
-    def __init__(self, hive: RegistryHive, data: bytes):
+class Cell:
+    __signature__ = b""
+    __struct__ = None
+
+    def __init__(self, hive: RegistryHive, data: bytes, strict: bool = True):
         self.hive = hive
+
+        if data[:2] != self.__signature__:
+            raise Error(f"Invalid {self.__class__.__name__} signature {data[:2]!r}, expected {self.__signature__!r}")
+
+        self.cell = self.__struct__(data)
+
+
+class KeyNode(Cell):
+    __signature__ = b"nk"
+    __struct__ = c_regf._CM_KEY_NODE
+
+    def __init__(self, hive: RegistryHive, data: bytes):
+        super().__init__(hive, data)
         self._cache = {}
 
-        self.nk = c_regf.NAMED_KEY(data)
-
         self.class_name = None
-        if self.nk.class_name_offset != 0xFFFFFFFF:
-            self.class_name = self.hive.read_cell_data(self.nk.class_name_offset)[: self.nk.class_name_size].decode(
-                "utf-16-le"
-            )
+        if (class_idx := self.cell.Class) != 0xFFFFFFFF:
+            self.class_name = self.hive.cell_data(class_idx)[: self.cell.ClassLength].decode("utf-16-le")
 
-        name_blob = data[len(c_regf.NAMED_KEY) :][: self.nk.key_name_size]
-
-        self.name = decode_name(name_blob, self.nk.key_name_size, self.nk.flags.CompName)
+        name_length = self.cell.NameLength
+        name_blob = data[len(self.__struct__) :][:name_length]
+        self.name = decode_name(name_blob, name_length, KEY.COMP_NAME in self.cell.Flags)
 
     def __repr__(self) -> str:
-        return f"<NamedKey {self.name}>"
+        return f"<KeyNode {self.name}>"
+
+    @cached_property
+    def timestamp(self) -> datetime:
+        return wintimestamp(self.cell.LastWriteTime)
 
     @property
     def path(self) -> str:
-        parts = []
-
-        current = self
         # As long as we are not the ROOT key, we add our name to the stack.
         #
         # The path is relative to the hive of this key. Adding a name for the
@@ -192,41 +190,40 @@ class NamedKey:
         # If ROOT would be part of that path, that part (and thus the whole
         # path) would not be accesible, nor is the presence of the ROOT part in
         # the path expected by the user (it is never visible in e.g. regedit).
-        parent = self.hive.cell(current.nk.parent_key_offset) if current.nk.flags.HiveEntry != 1 else None
+        parts = []
 
+        current = self
+        parent = self.hive.cell(current.cell.Parent) if KEY.HIVE_ENTRY not in current.cell.Flags else None
         while parent is not None:
             parts.append(current.name)
             current = parent
-            parent = self.hive.cell(current.nk.parent_key_offset) if current.nk.flags.HiveEntry != 1 else None
+            parent = self.hive.cell(current.cell.Parent) if KEY.HIVE_ENTRY not in current.cell.Flags else None
 
         return "\\".join(list(reversed(parts)))
 
-    @property
-    def timestamp(self) -> datetime:
-        return wintimestamp(self.nk.last_written)
-
     @cached_property
-    def subkey_list(self) -> IndexLeaf | FastLeaf | HashLeaf | IndexRoot | NamedKey | KeyValue | None:
-        if not self.nk.num_subkeys:
+    def _subkey_list(self) -> IndexLeaf | FastLeaf | HashLeaf | IndexRoot | None:
+        num_sk = self.cell.SubKeyCounts[STABLE]
+        if not num_sk:
             return None
 
-        subkey_list = self.hive.cell(self.nk.subkey_list_offset)
-        if self.nk.num_subkeys != subkey_list.num_elements:
+        subkey_list: KeyIndex = self.hive.cell(self.cell.SubKeyLists[STABLE])
+        if num_sk != subkey_list.count:
             log.debug(
-                "NamedKey %s has %d subkeys, while the %s has %d elements",
+                "KeyNode %s has %d subkeys, while the %s has %d elements",
                 self.name,
-                self.nk.num_subkeys,
+                num_sk,
                 subkey_list.__class__.__name__,
-                subkey_list.num_elements,
+                subkey_list.count,
             )
 
         return subkey_list
 
-    def subkeys(self) -> Iterator[IndexLeaf | FastLeaf | HashLeaf | IndexRoot | NamedKey | KeyValue]:
-        if self.subkey_list:
-            yield from self.subkey_list
+    def subkeys(self) -> Iterator[KeyNode]:
+        if self._subkey_list:
+            yield from self._subkey_list
 
-    def subkey(self, name: str) -> IndexLeaf | FastLeaf | HashLeaf | IndexRoot | NamedKey | KeyValue:
+    def subkey(self, name: str) -> KeyNode:
         lname = name.lower()
 
         try:
@@ -234,23 +231,20 @@ class NamedKey:
         except KeyError:
             pass
 
-        if self.subkey_list:
-            sk = self.subkey_list.subkey(name)
-
-            if sk:
-                self._cache[lname] = sk
-                return sk
+        if self._subkey_list and (sk := self._subkey_list.subkey(name)):
+            self._cache[lname] = sk
+            return sk
 
         raise RegistryKeyNotFoundError(name)
 
     def values(self) -> Iterator[KeyValue]:
-        if self.nk.num_values:
-            data = self.hive.read_cell_data(self.nk.value_list_offset)
+        if num_values := self.cell.ValueList.Count:
+            data = self.hive.cell_data(self.cell.ValueList.List)
 
             # Possible slack values
-            if len(data) // 4 < self.nk.num_values:
+            if len(data) // 4 < num_values:
                 num_values = len(data) // 4
-                bytes_short = self.nk.num_values * 4 - len(data)
+                bytes_short = num_values * 4 - len(data)
                 if bytes_short:
                     log.debug(
                         "Value list of key %r is %d bytes short reading %d values instead of %d, "
@@ -258,10 +252,8 @@ class NamedKey:
                         self.name,
                         bytes_short,
                         num_values,
-                        self.nk.num_values,
+                        num_values,
                     )
-            else:
-                num_values = self.nk.num_values
 
             yield from ValueList(self.hive, data, num_values)
 
@@ -271,52 +263,6 @@ class NamedKey:
                 return value
 
         raise RegistryValueNotFoundError(name)
-
-
-class KeyValue:
-    def __init__(self, hive: RegistryHive, data: bytes):
-        self.hive = hive
-        self.kv = c_regf.KEY_VALUE(data)
-
-        if data[:2] != b"vk":
-            raise Error(f"Invalid KeyValue signature {data[:2]!r}")
-
-        name_blob = data[len(c_regf.KEY_VALUE) :][: self.kv.name_length]
-        if self.kv.name_length == 0:
-            self.name = "(Default)"
-        else:
-            self.name = decode_name(name_blob, self.kv.name_length, self.kv.flags.CompName)
-
-    def __repr__(self) -> str:
-        return f"<KeyValue {self.name}={self.value!r}>"
-
-    @property
-    def type(self) -> int:
-        return self.kv.data_type
-
-    @cached_property
-    def data(self) -> bytes:
-        data_size = self.kv.data_size & ~0x80000000
-        if self.kv.data_size & 0x80000000:
-            data = struct.pack("I", self.kv.data_offset)[:data_size]
-        else:
-            data = self.hive.read_cell_data(self.kv.data_offset)[:data_size]
-            if data_size != 12 and len(data) == 12:
-                bd = c_regf.BIG_DATA(data)
-                if bd.signature == 0x6264:
-                    segment_list = self.hive.read_cell_data(bd.segment_list_offset)
-                    parts = []
-                    for segment in c_regf.int32[bd.num_segments](segment_list):
-                        part = self.hive.read_cell_data(segment)
-                        parts.append(part[:16344])
-
-                    data = b"".join(parts)[:data_size]
-
-        return data
-
-    @cached_property
-    def value(self) -> int | str | list[str] | bytes:
-        return parse_value(self.kv.data_type, self.data)
 
 
 class ValueList:
@@ -329,91 +275,163 @@ class ValueList:
             if entry <= 2:
                 continue
 
-            yield KeyValue(self.hive, self.hive.read_cell_data(entry))
+            yield KeyValue(self.hive, self.hive.cell_data(entry))
 
 
-class IndexRoot:
+class KeyValue(Cell):
+    __signature__ = b"vk"
+    __struct__ = c_regf._CM_KEY_VALUE
+
     def __init__(self, hive: RegistryHive, data: bytes):
-        self.hive = hive
-        self.ir = c_regf.INDEX_ROOT(data)
+        super().__init__(hive, data)
 
-    def __iter__(self) -> Iterator[IndexLeaf | FastLeaf | HashLeaf | IndexRoot | NamedKey | KeyValue]:
-        for entry in self.ir.entries:
-            yield from self.hive.cell(entry)
+        if (name_length := self.cell.NameLength) == 0:
+            self.name = "(Default)"
+        else:
+            name_blob = data[len(self.__struct__) :][:name_length]
+            self.name = decode_name(name_blob, name_length, VALUE.COMP_NAME in self.cell.Flags)
 
-    @property
-    def num_elements(self) -> int:
-        return self.ir.num_elements
+    def __repr__(self) -> str:
+        return f"<KeyValue {self.name}={self.value!r}>"
 
-    def subkey(self, name: str) -> IndexLeaf | FastLeaf | HashLeaf | IndexRoot | NamedKey | KeyValue | None:
-        for entry in self.ir.entries:
+    @cached_property
+    def type(self) -> int:
+        return self.cell.Type
+
+    @cached_property
+    def size(self) -> int:
+        return self.cell.DataLength & ~0x80000000
+
+    @cached_property
+    def is_big_value(self) -> bool:
+        # HSYS_WHISTLER_BETA1, CM_KEY_VALUE_SPECIAL_SIZE, CM_KEY_VALUE_BIG
+        return self.hive.version > 4 and self.cell.DataLength < 0x80000000 and self.cell.DataLength > 0x3FD8
+
+    @cached_property
+    def data(self) -> bytes:
+        data_size = self.size
+        if self.cell.DataLength & 0x80000000:
+            return struct.pack("<I", self.cell.Data)[:data_size]
+
+        if self.is_big_value:
+            bd = self.hive.cell(self.cell.Data)
+            if not isinstance(bd, BigData):
+                raise Error(f"Expected BigData, got {bd.__class__.__name__}")
+
+            return bd.data[:data_size]
+
+        return self.hive.cell_data(self.cell.Data)[:data_size]
+
+    @cached_property
+    def value(self) -> int | str | list[str] | bytes:
+        return parse_value(self.type, self.data)
+
+
+class KeyIndex(Cell):
+    def __len__(self) -> int:
+        raise NotImplementedError
+
+    def __iter__(self) -> Iterator[KeyNode]:
+        raise NotImplementedError
+
+    @cached_property
+    def count(self) -> int:
+        raise NotImplementedError
+
+    def subkey(self, name: str) -> KeyNode | None:
+        raise NotImplementedError
+
+
+class IndexRoot(KeyIndex):
+    __signature__ = b"ri"
+    __struct__ = c_regf._CM_KEY_INDEX
+
+    def __len__(self) -> int:
+        return self.count
+
+    def __iter__(self) -> Iterator[KeyNode]:
+        for entry in self.cell.List:
+            yield self.hive.cell(entry)
+
+    @cached_property
+    def count(self) -> int:
+        return self.cell.Count
+
+    def subkey(self, name: str) -> KeyNode | None:
+        for entry in self.cell.List:
             if sk := self.hive.cell(entry).subkey(name):
                 return sk
         return None
 
 
-class IndexLeaf:
-    def __init__(self, hive: RegistryHive, data: bytes):
-        self.hive = hive
-        self.il = c_regf.INDEX_LEAF(data)
+class IndexLeaf(KeyIndex):
+    __signature__ = b"li"
+    __struct__ = c_regf._CM_KEY_INDEX
 
-    def __iter__(self) -> Iterator[IndexLeaf | FastLeaf | HashLeaf | IndexRoot | NamedKey | KeyValue]:
-        for entry in self.il.entries:
+    def __len__(self) -> int:
+        return self.count
+
+    def __iter__(self) -> Iterator[KeyNode]:
+        for entry in self.cell.List:
             yield self.hive.cell(entry)
 
-    @property
-    def num_elements(self) -> int:
-        return self.il.num_elements
+    @cached_property
+    def count(self) -> int:
+        return self.cell.Count
 
-    def subkey(self, name: str) -> IndexLeaf | FastLeaf | HashLeaf | IndexRoot | NamedKey | KeyValue | None:
-        for entry in self.il.entries:
+    def subkey(self, name: str) -> KeyNode | None:
+        for entry in self.cell.List:
             if (sk := self.hive.cell(entry)).name == name:
                 return sk
         return None
 
 
-class HashLeaf:
-    def __init__(self, hive: RegistryHive, data: bytes):
-        self.hive = hive
-        self.hl = c_regf.HASH_LEAF(data)
+class HashLeaf(KeyIndex):
+    __signature__ = b"lh"
+    __struct__ = c_regf._CM_KEY_HASH_INDEX
 
-    def __iter__(self) -> Iterator[IndexLeaf | FastLeaf | HashLeaf | IndexRoot | NamedKey | KeyValue]:
-        for entry in self.hl.entries:
-            yield self.hive.cell(entry.key_node_offset)
+    def __len__(self) -> int:
+        return self.count
 
-    @property
-    def num_elements(self) -> int:
-        return self.hl.num_elements
+    def __iter__(self) -> Iterator[KeyNode]:
+        for entry in self.cell.List:
+            yield self.hive.cell(entry.Cell)
 
-    def subkey(self, name: str) -> IndexLeaf | FastLeaf | HashLeaf | IndexRoot | NamedKey | KeyValue | None:
+    @cached_property
+    def count(self) -> int:
+        return self.cell.Count
+
+    def subkey(self, name: str) -> KeyNode | None:
         name_hash = hashname(name)
         name = name.lower()
 
-        for entry in self.hl.entries:
-            if name_hash == entry.name_hash and (sk := self.hive.cell(entry.key_node_offset)).name.lower() == name:
+        for entry in self.cell.List:
+            if name_hash == entry.HashKey and (sk := self.hive.cell(entry.Cell)).name.lower() == name:
                 return sk
 
         return None
 
 
-class FastLeaf:
-    def __init__(self, hive: RegistryHive, data: bytes):
-        self.hive = hive
-        self.fl = c_regf.FAST_LEAF(data)
+class FastLeaf(KeyIndex):
+    __signature__ = b"lf"
+    __struct__ = c_regf._CM_KEY_FAST_INDEX
 
-    def __iter__(self) -> Iterator[IndexLeaf | FastLeaf | HashLeaf | IndexRoot | NamedKey | KeyValue]:
-        for entry in self.fl.entries:
-            yield self.hive.cell(entry.key_node_offset)
+    def __len__(self) -> int:
+        return self.count
 
-    @property
-    def num_elements(self) -> int:
-        return self.fl.num_elements
+    def __iter__(self) -> Iterator[KeyNode]:
+        for entry in self.cell.List:
+            yield self.hive.cell(entry.Cell)
 
-    def subkey(self, name: str) -> IndexLeaf | FastLeaf | HashLeaf | IndexRoot | NamedKey | KeyValue | None:
+    @cached_property
+    def count(self) -> int:
+        return self.cell.Count
+
+    def subkey(self, name: str) -> KeyNode | None:
         name = name.lower()
         name_hint = name[:4]
 
-        for entry in self.fl.entries:
+        for entry in self.cell.List:
             # If names are < 4 characters, the name hint is padded with
             # 0-bytes, the characters are stored from the lowest byte number
             # up.
@@ -422,12 +440,44 @@ class FastLeaf:
             # printable subset of ascii (MS documentation is inconclusive on
             # this).
             if (
-                name_hint == entry.name_hint.rstrip(b"\x00").decode("ascii").lower()
-                and (sk := self.hive.cell(entry.key_node_offset)).name.lower() == name
+                name_hint == entry.NameHint.rstrip(b"\x00").decode("ascii").lower()
+                and (sk := self.hive.cell(entry.Cell)).name.lower() == name
             ):
                 return sk
 
         return None
+
+
+class KeySecurity(Cell):
+    __signature__ = b"sk"
+    __struct__ = c_regf._CM_KEY_SECURITY
+
+
+class BigData(Cell):
+    __signature__ = b"db"
+    __struct__ = c_regf._CM_BIG_DATA
+
+    @property
+    def data(self) -> bytes:
+        parts = []
+        segment_list = self.hive.cell_data(self.cell.List)
+        for segment in c_regf.int32[self.cell.Count](segment_list):
+            part = self.hive.cell_data(segment)
+            parts.append(part[:16344])  # CM_KEY_VALUE_BIG
+
+        return b"".join(parts)
+
+
+_CELL_CLASSES = {
+    KeyNode.__signature__: KeyNode,
+    KeyValue.__signature__: KeyValue,
+    IndexRoot.__signature__: IndexRoot,
+    IndexLeaf.__signature__: IndexLeaf,
+    FastLeaf.__signature__: FastLeaf,
+    HashLeaf.__signature__: HashLeaf,
+    KeySecurity.__signature__: KeySecurity,
+    BigData.__signature__: BigData,
+}
 
 
 def decode_name(blob: bytes, size: int, is_comp_name: bool) -> str:

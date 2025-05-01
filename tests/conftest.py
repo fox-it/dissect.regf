@@ -21,4 +21,4 @@ def open_file_gz(name: str) -> Iterator[BinaryIO]:
 
 @pytest.fixture
 def system_hive() -> Iterator[BinaryIO]:
-    yield from open_file_gz("data/SYSTEM.gz")
+    yield from open_file_gz("_data/SYSTEM.gz")

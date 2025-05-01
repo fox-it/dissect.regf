@@ -3,144 +3,147 @@ from __future__ import annotations
 from dissect.cstruct import cstruct
 
 regf_def = """
-struct REGF_HEADER {
-    uint32 signature;
-    uint32 primary_sequence;
-    uint32 secondary_sequence;
-    uint64 last_modification_time;
-    uint32 major_version;
-    uint32 minor_version;
-    uint32 file_type;
-    uint32 file_format;
-    uint32 root_key_offset;
-    uint32 hive_bin_size;
-    uint32 clustering_factor;
-    char filename[64];
-    char reserved[396];
-    uint32 checksum;
+typedef ULONG       HCELL_INDEX;
+typedef ULONGLONG   LARGE_INTEGER;
+
+#define HTYPE_COUNT 2
+
+flag KEY : USHORT {
+    IS_VOLATILE     = 0x0001,
+    HIVE_EXIT       = 0x0002,
+    HIVE_ENTRY      = 0x0004,
+    NO_DELETE       = 0x0008,
+    SYM_LINK        = 0x0010,
+    COMP_NAME       = 0x0020,
+    PREDEF_HANDLE   = 0x0040,
+    VIRT_MIRRORED   = 0x0080,
+    VIRT_TARGET     = 0x0100,
+    VIRTUAL_STORE   = 0x0200,
 };
 
-struct HBIN_HEADER {
-    uint32 signature;
-    uint32 offset;
-    uint32 size;
-    uint64 reserved;
-    uint64 last_modification_time;
-    uint32 spare;
+flag VALUE : USHORT {
+    COMP_NAME       = 0x0001,
+    TOMBSTONE       = 0x0002,
 };
 
-struct NK_FLAGS {
-    uint16 Volatile:1;
-    uint16 HiveExit:1;
-    uint16 HiveEntry:1;
-    uint16 NoDelete:1;
-    uint16 SymLink:1;
-    uint16 CompName:1;
-    uint16 PredefinedHandle:1;
-    uint16 VirtualSource:1;
+typedef struct _HBASE_BLOCK {
+    ULONG           Signature;
+    ULONG           Sequence1;
+    ULONG           Sequence2;
+    LARGE_INTEGER   TimeStamp;
+    ULONG           Major;
+    ULONG           Minor;
+    ULONG           Type;
+    ULONG           Format;
+    HCELL_INDEX     RootCell;
+    ULONG           Length;
+    ULONG           Cluster;
+    WCHAR           FileName[32];
+    ULONG           Reserved1[99];
+    ULONG           CheckSum;
+    ULONG           Reserved2[0x37e];
+    ULONG           BootType;
+    ULONG           BootRecover;
+} HBASE_BLOCK;
 
-    uint16 VirtualTarget:1;
-    uint16 VirtualStore:1;
-    uint16 a:1;
-    uint16 b:1;
-    uint16 c:1;
-    uint16 d:1;
-    uint16 e:1;
-    uint16 f:1;
-};
+typedef struct _HBIN {
+    ULONG           Signature;
+    HCELL_INDEX     FileOffset;
+    ULONG           Size;
+    ULONG           Reserved[2];
+    LARGE_INTEGER   TimeStamp;
+    ULONG           Spare;
+} HBIN;
 
-struct NAMED_KEY {
-    char signature[2];
-    NK_FLAGS flags;
-    uint64 last_written;
-    uint32 access_bits;
-    uint32 parent_key_offset;
-    uint32 num_subkeys;
-    uint32 num_volatile_subkeys;
-    uint32 subkey_list_offset;
-    uint32 volatile_subkey_list_offset;
-    uint32 num_values;
-    uint32 value_list_offset;
-    uint32 security_key_offset;
-    uint32 class_name_offset;
-    uint32 largest_subkey_name_size;
-    uint32 largest_subkey_classname_size;
-    uint32 largest_value_name_size;
-    uint32 largest_value_data_size;
-    uint32 workvar;
-    uint16 key_name_size;
-    uint16 class_name_size;
-};
+typedef struct _CHILD_LIST {
+    ULONG           Count;
+    HCELL_INDEX     List;
+} CHILD_LIST;
 
-struct HASH_LEAF_ENTRY {
-    uint32 key_node_offset;
-    uint32 name_hash;
-};
+typedef struct _CM_KEY_NODE {
+    CHAR            Signature[2];
+    KEY             Flags;
+    LARGE_INTEGER   LastWriteTime;
+    ULONG           Spare;
+    HCELL_INDEX     Parent;
+    ULONG           SubKeyCounts[HTYPE_COUNT];
 
-struct HASH_LEAF {
-    uint16 signature;
-    uint16 num_elements;
-    HASH_LEAF_ENTRY entries[num_elements];
-};
+    /* Union with CM_KEY_REFERENCE ChildHiveReference; */
+    ULONG           SubKeyLists[HTYPE_COUNT];
+    CHILD_LIST      ValueList;
 
-struct FAST_LEAF_ENTRY {
-    uint32 key_node_offset;
-    char name_hint[4];
-};
+    HCELL_INDEX     Security;
+    HCELL_INDEX     Class;
+    ULONG           MaxNameLen;
+    ULONG           MaxClassLen;
+    ULONG           MaxValueNameLen;
+    ULONG           MaxValueDataLen;
+    ULONG           WorkVar;
+    USHORT          NameLength;
+    USHORT          ClassLength;
+    // WCHAR           Name[1];
+} CM_KEY_NODE;
 
-struct FAST_LEAF {
-    uint16 signature;
-    uint16 num_elements;
-    FAST_LEAF_ENTRY entries[num_elements];
-};
+typedef struct _CM_INDEX {
+    HCELL_INDEX     Cell;
+    CHAR            NameHint[4];
+} CM_INDEX;
 
-struct INDEX_ROOT {
-    uint16 signature;
-    uint16 num_elements;
-    uint32 entries[num_elements];
-};
+typedef struct _CM_HASH_INDEX {
+    HCELL_INDEX     Cell;
+    ULONG           HashKey;
+} CM_HASH_INDEX;
 
-struct INDEX_LEAF {
-    uint16 signature;
-    uint16 num_elements;
-    uint32 entries[num_elements];
-};
+typedef struct _CM_KEY_INDEX {
+    CHAR            Signature[2];
+    USHORT          Count;
+    HCELL_INDEX     List[Count];
+} CM_KEY_INDEX;
 
-struct KEY_VALUE_FLAGS {
-    uint16 CompName:1;
-    uint16 Tombstone:1;
-};
+typedef struct _CM_KEY_FAST_INDEX {
+    CHAR            Signature[2];
+    USHORT          Count;
+    CM_INDEX        List[Count];
+} CM_KEY_FAST_INDEX;
 
-struct KEY_VALUE {
-    uint16 signature;
-    uint16 name_length;
-    uint32 data_size;
-    uint32 data_offset;
-    uint32 data_type;
-    KEY_VALUE_FLAGS flags;
-    uint16 spare;
-};
+typedef struct _CM_KEY_HASH_INDEX {
+    CHAR            Signature[2];
+    USHORT          Count;
+    CM_HASH_INDEX   List[Count];
+} CM_KEY_HASH_INDEX;
 
-struct KEY_SECURITY {
-    uint16  signature;
-    uint16  reserved;
-    uint32  flink;
-    uint32  blink;
-    uint32  reference_count;
-    uint32  security_descriptor_size;
-    char    security_descriptor[security_descriptor_size];
-};
+typedef struct _CM_KEY_VALUE {
+    CHAR            Signature[2];
+    USHORT          NameLength;
+    ULONG           DataLength;
+    HCELL_INDEX     Data;
+    ULONG           Type;
+    VALUE           Flags;
+    USHORT          Spare;
+    // WCHAR           Name[1];
+} CM_KEY_VALUE;
 
-struct BIG_DATA {
-    uint16 signature;
-    uint16 num_segments;
-    uint32 segment_list_offset;
-    uint32 a;
-};
+typedef struct _CM_KEY_SECURITY {
+    CHAR            Signature[2];
+    USHORT          Reserved;
+    HCELL_INDEX     Flink;
+    HCELL_INDEX     Blink;
+    ULONG           ReferenceCount;
+    ULONG           DescriptorLength;
+    CHAR            Descriptor[DescriptorLength];
+} CM_KEY_SECURITY;
+
+typedef struct _CM_BIG_DATA {
+    CHAR            Signature[2];
+    USHORT          Count;
+    HCELL_INDEX     List;
+} CM_BIG_DATA;
 """
 
 c_regf = cstruct().load(regf_def)
 
+KEY = c_regf.KEY
+VALUE = c_regf.VALUE
 
 REG_NONE = 0x0
 REG_SZ = 0x1
