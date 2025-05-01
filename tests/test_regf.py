@@ -29,6 +29,8 @@ def test_regf(system_hive: BinaryIO) -> None:
 
     assert hive.open("ControlSet001\\Services\\Tcpip\\Parameters\\DNSRegisteredAdapters").class_name == "DynDRootClass"
 
+    assert list(hive.walk())
+
 
 @pytest.mark.parametrize(
     ("data", "expected"),

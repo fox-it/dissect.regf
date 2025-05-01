@@ -86,7 +86,7 @@ typedef struct _CM_KEY_NODE {
 
 typedef struct _CM_INDEX {
     HCELL_INDEX     Cell;
-    UCHAR           NameHint[4];
+    CHAR            NameHint[4];
 } CM_INDEX;
 
 typedef struct _CM_HASH_INDEX {
