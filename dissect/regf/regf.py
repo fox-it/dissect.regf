@@ -39,7 +39,7 @@ log.setLevel(os.getenv("DISSECT_LOG_REGF", "CRITICAL"))
 
 
 # TODO: Add `: TypeAlias` when we drop Python 3.9
-CellType = "IndexLeaf | FastLeaf| HashLeaf | IndexRoot | KeyNode | KeyValue"
+CellType = "IndexLeaf | FastLeaf | HashLeaf | IndexRoot | KeyNode | KeyValue"
 
 STABLE = 0
 VOLATILE = 1
