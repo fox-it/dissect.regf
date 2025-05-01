@@ -5,7 +5,7 @@ import os
 import struct
 from functools import cached_property, lru_cache
 from io import BytesIO
-from typing import TYPE_CHECKING, BinaryIO, TypeAlias
+from typing import TYPE_CHECKING, BinaryIO
 
 from dissect.util.ts import wintimestamp
 
