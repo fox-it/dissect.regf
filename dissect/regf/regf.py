@@ -351,7 +351,7 @@ class IndexRoot(KeyIndex):
 
     def __iter__(self) -> Iterator[KeyNode]:
         for entry in self.cell.List:
-            yield self.hive.cell(entry)
+            yield from self.hive.cell(entry)
 
     @cached_property
     def count(self) -> int:
