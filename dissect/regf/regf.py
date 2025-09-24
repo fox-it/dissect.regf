@@ -5,7 +5,7 @@ import os
 import struct
 from functools import cached_property, lru_cache
 from io import BytesIO
-from typing import TYPE_CHECKING, BinaryIO
+from typing import TYPE_CHECKING, BinaryIO, TypeAlias
 
 from dissect.util.ts import wintimestamp
 
@@ -38,8 +38,7 @@ log = logging.getLogger(__name__)
 log.setLevel(os.getenv("DISSECT_LOG_REGF", "CRITICAL"))
 
 
-# TODO: Add `: TypeAlias` when we drop Python 3.9
-CellType = "IndexLeaf | FastLeaf | HashLeaf | IndexRoot | KeyNode | KeyValue"
+CellType: TypeAlias = "IndexLeaf | FastLeaf | HashLeaf | IndexRoot | KeyNode | KeyValue"
 
 STABLE = 0
 VOLATILE = 1
