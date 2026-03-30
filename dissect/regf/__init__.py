@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from dissect.regf.exceptions import (
     Error,
     RegistryKeyNotFoundError,
