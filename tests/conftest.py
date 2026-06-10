@@ -27,3 +27,8 @@ def system_hive() -> Iterator[BinaryIO]:
 @pytest.fixture
 def bad_key_value_cell_hive() -> Iterator[BinaryIO]:
     yield from open_file_gz("_data/BadKeyValueCell.gz")
+
+
+@pytest.fixture
+def fastleaf_hive() -> Iterator[BinaryIO]:
+    yield from open_file_gz("_data/FastLeaf.gz")

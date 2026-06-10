@@ -6,6 +6,7 @@ from typing import BinaryIO
 import pytest
 
 from dissect.regf import regf
+from dissect.regf.exceptions import RegistryKeyNotFoundError
 
 
 def test_regf(system_hive: BinaryIO) -> None:
@@ -108,3 +109,19 @@ def test_bad_keyvalue_cell_entry(bad_key_value_cell_hive: BinaryIO, caplog: pyte
         assert value_dict["Start"].value == 3
 
     assert "Invalid cell signature b'6\\x00' at offset 0x130" in caplog.text
+
+
+def test_fastleaf_non_ascii_subkey(fastleaf_hive: BinaryIO) -> None:
+    hive = regf.RegistryHive(fastleaf_hive)
+    root = hive.root()
+
+    assert isinstance(root._subkey_list, regf.FastLeaf)
+
+    key = root.subkey("Администратор")
+    assert key.name == "Администратор"
+
+    key = root.subkey("Гость")
+    assert key.name == "Гость"
+
+    with pytest.raises(RegistryKeyNotFoundError):
+        root.subkey("Missing")

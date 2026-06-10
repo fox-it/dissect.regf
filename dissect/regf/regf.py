@@ -443,11 +443,13 @@ class FastLeaf(KeyIndex):
             # characters except the `\' character", which probably is the
             # printable subset of ascii (MS documentation is inconclusive on
             # this).
-            if (
-                name_hint == entry.NameHint.rstrip(b"\x00").decode("ascii").lower()
-                and (sk := self.hive.cell(entry.Cell)).name.lower() == name
-            ):
-                return sk
+            # For non-ASCII names name hint is filled with zeroes, for these cases
+            # we need to fall back to regular name comparison
+            hint = entry.NameHint.rstrip(b"\x00").decode("ascii").lower()
+            if not hint or name_hint == hint:
+                sk = self.hive.cell(entry.Cell)
+                if sk.name.lower() == name:
+                    return sk
 
         return None
 
